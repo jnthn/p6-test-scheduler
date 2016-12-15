@@ -77,6 +77,31 @@ use Test::Scheduler;
     my $p3 = Promise.new;
     $*SCHEDULER.cue: { $p3.keep(22) }, :at($sim-time + 40);
     is await($p3), 22, 'Promise at current virtual time scheduled immediately';
+
+    my $p4 = Promise.new;
+    $*SCHEDULER.cue: { $p4.keep(69) }, :at($sim-time + 35);
+    is await($p4), 69, 'Promise at earlier virtual time scheduled immediately';
+}
+
+{
+    my $c = Channel.new;
+    my $*SCHEDULER = Test::Scheduler.new;
+    $*SCHEDULER.cue: { $c.send('x') }, :in(10), :times(3);
+    $*SCHEDULER.advance-by(1);
+    nok $c.poll, 'Nothing sent when advancing just 1s';
+    $*SCHEDULER.advance-by(4);
+    nok $c.poll, 'Nothing sent when advancing another 4s';
+    $*SCHEDULER.advance-by(5);
+    my @a = $c.receive xx 3;
+    is @a, ['x', 'x', 'x'], 'Ran 3 times when got to 10s total time';
+}
+
+{
+    my $c = Channel.new;
+    my $*SCHEDULER = Test::Scheduler.new;
+    $*SCHEDULER.cue: { $c.send('x') }, :times(4);
+    my @a = $c.receive xx 4;
+    is @a, ['x', 'x', 'x', 'x'], ':times used without :in schedules right away';
 }
 
 done-testing;

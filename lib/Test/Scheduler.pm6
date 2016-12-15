@@ -46,8 +46,8 @@ class Test::Scheduler does Scheduler {
                     push @!future, $_;
                     push @to-cancel, $_;
                 }
-                $delay = 0;
             }
+            self!run-due();
             # XXX Cancellation
             return Nil;
         }
