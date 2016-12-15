@@ -65,6 +65,12 @@ class Test::Scheduler does Scheduler {
         self!run-due();
     }
 
+    method advance-to(Instant $new-virtual-time --> Nil) {
+        die X::Test::Scheduler::BackInTime.new if $new-virtual-time < $!virtual-time;
+        $!virtual-time = $new-virtual-time;
+        self!run-due();
+    }
+
     method !run-due() {
         my (:@now, :@future) := @!future.classify: {
             .virtual-time <= $!virtual-time ?? 'now' !! 'future'

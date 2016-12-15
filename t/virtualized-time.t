@@ -35,7 +35,7 @@ use Test::Scheduler;
 
     $*SCHEDULER.advance-by(20);
     await $p1;
-    ok $p1, 'Promise 1 in 20s kept upon advancing to 20s';
+    ok $p1, 'Promise 1 in 20s kept upon advancing by 20s';
     my $p3 = Promise.in(10);
     nok $p2, 'Promise at 40s not yet kept';
     nok $p3, 'New promise at 10s (relative to current 20s) not yet kept';
@@ -102,6 +102,62 @@ use Test::Scheduler;
     $*SCHEDULER.cue: { $c.send('x') }, :times(4);
     my @a = $c.receive xx 4;
     is @a, ['x', 'x', 'x', 'x'], ':times used without :in schedules right away';
+}
+
+{
+    my $sim-time = now + 50000;
+    my $*SCHEDULER = Test::Scheduler.new(virtual-time => $sim-time);
+
+    my $p1 = Promise.in(20);
+    my $p2 = Promise.in(40);
+    $*SCHEDULER.advance-to($sim-time + 20);
+    await $p1;
+    ok $p1, 'Promise 1 in 20s kept upon advancing to 20s';
+    my $p3 = Promise.in(10);
+    nok $p2, 'Promise at 40s not yet kept';
+    nok $p3, 'New promise in 10s (relative to current 20s) not yet kept';
+
+    $*SCHEDULER.advance-to($sim-time + 30);
+    await $p3;
+    ok $p3, 'Promise 3 kept after advancing to 30s';
+    nok $p2, 'Promise at 40s from start point not yet kept';
+
+    $*SCHEDULER.advance-to($sim-time + 40);
+    await $p3;
+    ok $p3, 'Promise at 40s kept after advancing to 40s';
+
+    throws-like { $*SCHEDULER.advance-to($sim-time + 39) },
+        X::Test::Scheduler::BackInTime;
+}
+
+{
+    my $sim-time = now + 50000;
+    my $*SCHEDULER = Test::Scheduler.new(virtual-time => $sim-time);
+    $*SCHEDULER.advance-to($sim-time + 10);
+    is $*SCHEDULER.virtual-time, $sim-time + 10,
+        'Virtual time can be advanced with advance-to';
+
+    my $p1 = Promise.new;
+    my $p2 = Promise.new;
+    $*SCHEDULER.cue: { $p1.keep(42) }, :at($sim-time + 40);
+    $*SCHEDULER.cue: { $p2.keep(101) }, :at($sim-time + 30);
+    $*SCHEDULER.advance-to($sim-time + 30);
+    is await($p2), 101, 'Scheduling with at works when using advance-to';
+    nok $p1, 'Still not kept promise at sim + 40s yet';
+
+    $*SCHEDULER.advance-to($sim-time + 40);
+    is await($p1), 42,
+        'After advancing to 40s past start time, kept promise at sim + 40s';
+
+    my $p3 = Promise.new;
+    $*SCHEDULER.cue: { $p3.keep(22) }, :at($sim-time + 40);
+    is await($p3), 22,
+        'Promise at current virtual time scheduled immediately having used advance-to';
+
+    my $p4 = Promise.new;
+    $*SCHEDULER.cue: { $p4.keep(69) }, :at($sim-time + 35);
+    is await($p4), 69,
+        'Promise at earlier virtual time scheduled immediately having used advance-to';
 }
 
 done-testing;
