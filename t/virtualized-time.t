@@ -160,4 +160,24 @@ use Test::Scheduler;
         'Promise at earlier virtual time scheduled immediately having used advance-to';
 }
 
+{
+    my $*SCHEDULER = Test::Scheduler.new;
+    my $s = Supply.interval(10);
+    my $c = Channel.new;
+    $s.tap: { $c.send($_) }
+    is $c.receive, 0, 'Supply.interval zero value scheduled right away';
+
+    my $real-start = now;
+    nok $c.poll, 'No more values available before advancing scheduler';
+    $*SCHEDULER.advance-by(10);
+    is $c.receive, 1, 'After advancing by 10s, get one more value';
+
+    nok $c.poll, 'No more values available before advancing scheduler again';
+    $*SCHEDULER.advance-by(20);
+    is $c.receive, 2, 'After advancing by a further 20s, get one more value...';
+    is $c.receive, 3, '...and another value';
+
+    ok now - $real-start < 5, 'Certainly scheduling using virtual time';
+}
+
 done-testing;

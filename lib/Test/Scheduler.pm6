@@ -10,6 +10,7 @@ class Test::Scheduler does Scheduler {
     my class FutureEvent {
         has &.schedulee is required;
         has $.virtual-time is required;
+        has $.reschedule-after;
         has Bool $.cancelled = False;
     }
 
@@ -31,7 +32,23 @@ class Test::Scheduler does Scheduler {
 
         # need repeating
         if $every {
-            !!! ":every NYI in test scheduler";
+            # we have a stopper
+            if &stop {
+                !!! "every with stopper NYI";
+            }
+            # no stopper
+            else {
+                push @!future, FutureEvent.new(
+                    schedulee => &catch
+                        ?? -> { code(); CATCH { default { catch($_) } } }
+                        !! &code,
+                    virtual-time => $!virtual-time + $delay,
+                    reschedule-after => $every
+                );
+                self!run-due();
+                # XXX Cancellation
+                return Nil;
+            }
         }
 
         # only after waiting a bit or more than once
@@ -72,12 +89,20 @@ class Test::Scheduler does Scheduler {
     }
 
     method !run-due() {
-        my (:@now, :@future) := @!future.classify: {
-            .virtual-time <= $!virtual-time ?? 'now' !! 'future'
-        }
-        @!future := @future;
-        for @now {
-            $!wrapped-scheduler.cue(.schedulee);
+        loop {
+            my (:@now, :@future) := @!future.classify: {
+                .virtual-time <= $!virtual-time ?? 'now' !! 'future'
+            }
+            @!future := @future;
+            return unless @now;
+            for @now {
+                $!wrapped-scheduler.cue(.schedulee);
+                if .reschedule-after {
+                    @!future.push(.clone(
+                        virtual-time => .virtual-time + .reschedule-after
+                    ));
+                }
+            }
         }
     }
 
