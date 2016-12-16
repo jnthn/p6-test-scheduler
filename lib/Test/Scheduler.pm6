@@ -11,7 +11,7 @@ class Test::Scheduler does Scheduler {
         has &.schedulee is required;
         has $.virtual-time is required;
         has $.reschedule-after;
-        has Bool $.cancelled = False;
+        has $.cancellation;
     }
 
     has $!wrapped-scheduler;
@@ -38,16 +38,17 @@ class Test::Scheduler does Scheduler {
             }
             # no stopper
             else {
+                my $cancellation = Cancellation.new;
                 push @!future, FutureEvent.new(
                     schedulee => &catch
                         ?? -> { code(); CATCH { default { catch($_) } } }
                         !! &code,
                     virtual-time => $!virtual-time + $delay,
-                    reschedule-after => $every
+                    reschedule-after => $every,
+                    cancellation => $cancellation
                 );
                 self!run-due();
-                # XXX Cancellation
-                return Nil;
+                return $cancellation;
             }
         }
 
@@ -56,17 +57,13 @@ class Test::Scheduler does Scheduler {
             my &schedulee := &catch
                 ?? -> { code(); CATCH { default { catch($_) } } }
                 !! &code;
-            my @to-cancel;
-            for 1 .. $times {
-                my $virtual-time = $!virtual-time + $delay;
-                given FutureEvent.new(:&schedulee, :$virtual-time) {
-                    push @!future, $_;
-                    push @to-cancel, $_;
-                }
+            my $cancellation = Cancellation.new;
+            my $virtual-time = $!virtual-time + $delay;
+            for 1..$times {
+                @!future.push: FutureEvent.new(:&schedulee, :$virtual-time, :$cancellation);
             }
             self!run-due();
-            # XXX Cancellation
-            return Nil;
+            return $cancellation;
         }
 
         # just cue the code
@@ -96,6 +93,7 @@ class Test::Scheduler does Scheduler {
             @!future := @future;
             return unless @now;
             for @now {
+                next if .cancellation.?cancelled;
                 $!wrapped-scheduler.cue(.schedulee);
                 if .reschedule-after {
                     @!future.push(.clone(

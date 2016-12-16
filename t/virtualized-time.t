@@ -180,4 +180,35 @@ use Test::Scheduler;
     ok now - $real-start < 5, 'Certainly scheduling using virtual time';
 }
 
+{
+    my $*SCHEDULER = Test::Scheduler.new();
+    my $p = Promise.new;
+    my $canc = $*SCHEDULER.cue: { $p.keep(42) }, :in(20);
+    $canc.cancel();
+    $*SCHEDULER.advance-by(20);
+    nok $p, 'Cancelled scheduled work does not run...';
+    sleep 0.1;
+    nok $p, '...even after giving it a little time';
+}
+
+{
+    my $*SCHEDULER = Test::Scheduler.new;
+    my $c = Channel.new;
+    my $canc = $*SCHEDULER.cue: { state $i = 0; $c.send($i++) }, :every(10);
+    is $c.receive, 0, 'Supply.interval zero value scheduled right away';
+    nok $c.poll, 'No more values available before advancing scheduler';
+
+    $*SCHEDULER.advance-by(10);
+    is $c.receive, 1, 'After advancing by 10s, get one more value';
+    nok $c.poll, 'No more values after 10s';
+
+    $canc.cancel;
+    $*SCHEDULER.advance-by(10);
+    nok $c.poll, 'No value after cancellation then a further 10s';
+    $*SCHEDULER.advance-by(10);
+    nok $c.poll, 'Same after a further 10s...';
+    sleep 0.1;
+    nok $c.poll, '...even after giving it a little time';
+}
+
 done-testing;
