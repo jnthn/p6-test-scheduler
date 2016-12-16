@@ -257,4 +257,25 @@ use Test::Scheduler;
     nok $c.poll, '...even after giving it a little time';
 }
 
+{
+    my $*SCHEDULER = Test::Scheduler.new;
+    my $c = Channel.new;
+    for reverse 1..20 -> $i {
+        Promise.in($i).then({ $c.send($i) })
+    }
+    $*SCHEDULER.advance-by(20);
+    ok [<]($c.receive xx 20), 'Events are scheduled in the right order';
+}
+
+{
+    my $*SCHEDULER = Test::Scheduler.new;
+    my $c = Channel.new;
+    my $p1 = Promise.in(1).then({ Promise.in(1).then({ $c.send('a') }) });
+    my $p2 = Promise.in(3).then({ $c.send('b') });
+
+    $*SCHEDULER.advance-by(4);
+    is $c.receive, 'a', 'Scheduling order respects nested scheduling order (1)';
+    is $c.receive, 'b', 'Scheduling order respects nested scheduling order (2)';
+}
+
 done-testing;

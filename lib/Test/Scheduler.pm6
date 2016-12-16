@@ -16,6 +16,7 @@ class Test::Scheduler does Scheduler {
 
     has $!wrapped-scheduler;
     has $.virtual-time = now;
+    has $!virtual-target = $!virtual-time;
     has @!future;
     has $!lock = Lock.new;
 
@@ -47,12 +48,14 @@ class Test::Scheduler does Scheduler {
                     push @!future, FutureEvent.new(
                         schedulee => &catch
                             ?? -> {
+                                my $*SCHEDULER = self;
                                 stop()
                                     ?? $cancellation.cancel
                                     !! code();
                                 CATCH { default { catch($_) } };
                             }
                             !! -> {
+                                my $*SCHEDULER = self;
                                 stop()
                                     ?? $cancellation.cancel
                                     !! code();
@@ -61,8 +64,8 @@ class Test::Scheduler does Scheduler {
                         reschedule-after => $every,
                         cancellation => $cancellation
                     );
-                    self!run-due();
                 }
+                self!run-due();
                 return $cancellation;
             }
             # no stopper
@@ -71,14 +74,21 @@ class Test::Scheduler does Scheduler {
                 $!lock.protect: {
                     push @!future, FutureEvent.new(
                         schedulee => &catch
-                            ?? -> { code(); CATCH { default { catch($_) } } }
-                            !! &code,
+                            ?? -> {
+                                my $*SCHEDULER = self;
+                                code();
+                                CATCH { default { catch($_) } } 
+                            }
+                            !! -> {
+                                my $*SCHEDULER = self;
+                                code()
+                            },
                         virtual-time => $!virtual-time + $delay,
                         reschedule-after => $every,
                         cancellation => $cancellation
                     );
-                    self!run-due();
                 }
+                self!run-due();
                 return $cancellation;
             }
         }
@@ -86,58 +96,107 @@ class Test::Scheduler does Scheduler {
         # only after waiting a bit or more than once
         elsif $delay or $times > 1 {
             my &schedulee := &catch
-                ?? -> { code(); CATCH { default { catch($_) } } }
-                !! &code;
+                ?? -> {
+                    my $*SCHEDULER = self;
+                    code();
+                    CATCH { default { catch($_) } }
+                }
+                !! -> {
+                    my $*SCHEDULER = self;
+                    code();
+                };
             my $cancellation = Cancellation.new;
             my $virtual-time = $!virtual-time + $delay;
             $!lock.protect: {
                 for 1..$times {
                     @!future.push: FutureEvent.new(:&schedulee, :$virtual-time, :$cancellation);
                 }
-                self!run-due();
             }
+            self!run-due();
             return $cancellation;
         }
 
         # just cue the code
         else {
-            $!wrapped-scheduler.cue(&code, :&catch);
+            with @*TEST-SCHEDULER-NESTED -> @nested {
+                my $p = Promise.new;
+                $!lock.protect: { @nested.push($p) };
+                $!wrapped-scheduler.cue(
+                    {
+                        my $*SCHEDULER = self;
+                        code();
+                        LEAVE $p.keep(True);
+                    },
+                    :&catch);
+            }
+            else {
+                $!wrapped-scheduler.cue(
+                    {
+                        my $*SCHEDULER = self;
+                        code()
+                    },
+                    :&catch);
+            }
             return Nil;
         }
     }
 
     method advance-by($seconds --> Nil) {
-        $!lock.protect: {
-            die X::Test::Scheduler::BackInTime.new if $seconds < 0;
-            $!virtual-time += $seconds;
-            self!run-due();
-        }
+        die X::Test::Scheduler::BackInTime.new if $seconds < 0;
+        $!virtual-target += $seconds;
+        self!run-due();
+        $!virtual-time = $!virtual-target;
     }
 
     method advance-to(Instant $new-virtual-time --> Nil) {
-        $!lock.protect: {
-            die X::Test::Scheduler::BackInTime.new if $new-virtual-time < $!virtual-time;
-            $!virtual-time = $new-virtual-time;
-            self!run-due();
-        }
+        die X::Test::Scheduler::BackInTime.new if $new-virtual-time < $!virtual-time;
+        $!virtual-target = $new-virtual-time;
+        self!run-due();
+        $!virtual-time = $!virtual-target;
     }
 
     method !run-due() {
         loop {
-            my (:@now, :@future) := @!future.classify: {
-                .virtual-time <= $!virtual-time ?? 'now' !! 'future'
+            my (@now, @future) := $!lock.protect: {
+                my (:@now, :@future) := @!future.classify: {
+                    .virtual-time <= $!virtual-target ?? 'now' !! 'future'
+                }
+                return unless @now;
+                @!future = ();
+                @now, @future
             }
-            @!future := @future;
-            return unless @now;
-            for @now {
+
+            my @sorted = @now.sort(*.virtual-time);
+            for @sorted.kv -> $i, $_ {
                 next if .cancellation.?cancelled;
-                $!wrapped-scheduler.cue(.schedulee);
+                $!virtual-time = .virtual-time;
+                given .schedulee -> &to-run {
+                    my $done = Promise.new;
+                    $!wrapped-scheduler.cue({
+                        my @*TEST-SCHEDULER-NESTED = ();
+                        to-run();
+                        await Promise.allof(@*TEST-SCHEDULER-NESTED);
+                        LEAVE $done.keep(True);
+                    });
+                    await $done;
+                    if $!lock.protect: { so @!future } {
+                        @future.append(@sorted[$i + 1 .. *]);
+                        last;
+                    }
+                }
                 if .reschedule-after {
-                    @!future.push(.clone(
-                        virtual-time => .virtual-time + .reschedule-after
+                    my $next-time = .virtual-time + .reschedule-after;
+                    @future.push(.clone(
+                        virtual-time => $next-time
                     ));
+                    if $next-time < $!virtual-target {
+                        @future.append(@sorted[$i + 1 .. *]);
+                        last;
+                    }
                 }
             }
+
+            $!lock.protect: { @!future.append(@future) }
         }
     }
 
