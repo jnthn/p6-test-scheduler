@@ -195,7 +195,7 @@ use Test::Scheduler;
     my $*SCHEDULER = Test::Scheduler.new;
     my $c = Channel.new;
     my $canc = $*SCHEDULER.cue: { state $i = 0; $c.send($i++) }, :every(10);
-    is $c.receive, 0, 'Supply.interval zero value scheduled right away';
+    is $c.receive, 0, ':every zero value scheduled right away';
     nok $c.poll, 'No more values available before advancing scheduler';
 
     $*SCHEDULER.advance-by(10);
@@ -205,6 +205,29 @@ use Test::Scheduler;
     $canc.cancel;
     $*SCHEDULER.advance-by(10);
     nok $c.poll, 'No value after cancellation then a further 10s';
+    $*SCHEDULER.advance-by(10);
+    nok $c.poll, 'Same after a further 10s...';
+    sleep 0.1;
+    nok $c.poll, '...even after giving it a little time';
+}
+
+{
+    my $*SCHEDULER = Test::Scheduler.new;
+    my $c = Channel.new;
+    my $stop = False;
+    my $canc = $*SCHEDULER.cue: { state $i = 0; $c.send($i++) },
+        :every(10),
+        :stop({ $stop });
+    is $c.receive, 0, ':every + :stop zero value scheduled right away';
+    nok $c.poll, 'No more values available before advancing scheduler';
+
+    $*SCHEDULER.advance-by(10);
+    is $c.receive, 1, 'After advancing by 10s, get one more value';
+    nok $c.poll, 'No more values after 10s';
+
+    $stop = True;
+    $*SCHEDULER.advance-by(10);
+    nok $c.poll, 'No value after stopper became true';
     $*SCHEDULER.advance-by(10);
     nok $c.poll, 'Same after a further 10s...';
     sleep 0.1;

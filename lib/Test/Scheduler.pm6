@@ -34,7 +34,26 @@ class Test::Scheduler does Scheduler {
         if $every {
             # we have a stopper
             if &stop {
-                !!! "every with stopper NYI";
+                my $cancellation = Cancellation.new;
+                push @!future, FutureEvent.new(
+                    schedulee => &catch
+                        ?? -> {
+                            stop()
+                                ?? $cancellation.cancel
+                                !! code();
+                            CATCH { default { catch($_) } };
+                        }
+                        !! -> {
+                            stop()
+                                ?? $cancellation.cancel
+                                !! code();
+                        },
+                    virtual-time => $!virtual-time + $delay,
+                    reschedule-after => $every,
+                    cancellation => $cancellation
+                );
+                self!run-due();
+                return $cancellation;
             }
             # no stopper
             else {
