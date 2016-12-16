@@ -234,4 +234,27 @@ use Test::Scheduler;
     nok $c.poll, '...even after giving it a little time';
 }
 
+{
+    my $*SCHEDULER = Test::Scheduler.new;
+    my $c = Channel.new;
+    $*SCHEDULER.cue: { state $i = 0; $c.send($i++) }, :every(10), :times(3);
+    is $c.receive, 0, ':every + :times(3) zero value scheduled right away';
+    nok $c.poll, 'No more values available before advancing scheduler';
+
+    $*SCHEDULER.advance-by(10);
+    is $c.receive, 1, 'After advancing by 10s, get one more value';
+    nok $c.poll, 'No more values after 10s';
+
+    $*SCHEDULER.advance-by(10);
+    is $c.receive, 2, 'After advancing by a further 10s, get one more value';
+    nok $c.poll, 'No more values after 10s';
+
+    $*SCHEDULER.advance-by(10);
+    nok $c.poll, 'No forth value due to :times(3)';
+    $*SCHEDULER.advance-by(10);
+    nok $c.poll, 'Same after a further 10s...';
+    sleep 0.1;
+    nok $c.poll, '...even after giving it a little time';
+}
+
 done-testing;

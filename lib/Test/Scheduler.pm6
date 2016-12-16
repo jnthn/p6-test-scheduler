@@ -32,6 +32,13 @@ class Test::Scheduler does Scheduler {
 
         # need repeating
         if $every {
+            # generate a stopper if needed
+            if $times > 1 {
+                my $todo = $times;
+                my $lock = Lock.new;
+                &stop = { $lock.protect: { $todo ?? !$todo-- !! True } }
+            }
+
             # we have a stopper
             if &stop {
                 my $cancellation = Cancellation.new;
