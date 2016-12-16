@@ -65,7 +65,7 @@ class Test::Scheduler does Scheduler {
                         cancellation => $cancellation
                     );
                 }
-                self!run-due();
+                self!run-due($!virtual-time);
                 return $cancellation;
             }
             # no stopper
@@ -88,7 +88,7 @@ class Test::Scheduler does Scheduler {
                         cancellation => $cancellation
                     );
                 }
-                self!run-due();
+                self!run-due($!virtual-time);
                 return $cancellation;
             }
         }
@@ -112,7 +112,7 @@ class Test::Scheduler does Scheduler {
                     @!future.push: FutureEvent.new(:&schedulee, :$virtual-time, :$cancellation);
                 }
             }
-            self!run-due();
+            self!run-due($!virtual-time);
             return $cancellation;
         }
 
@@ -155,11 +155,11 @@ class Test::Scheduler does Scheduler {
         $!virtual-time = $!virtual-target;
     }
 
-    method !run-due() {
+    method !run-due($target = $!virtual-target) {
         loop {
             my (@now, @future) := $!lock.protect: {
                 my (:@now, :@future) := @!future.classify: {
-                    .virtual-time <= $!virtual-target ?? 'now' !! 'future'
+                    .virtual-time <= $target ?? 'now' !! 'future'
                 }
                 return unless @now;
                 @!future = ();
@@ -189,7 +189,7 @@ class Test::Scheduler does Scheduler {
                     @future.push(.clone(
                         virtual-time => $next-time
                     ));
-                    if $next-time < $!virtual-target {
+                    if $next-time < $target {
                         @future.append(@sorted[$i + 1 .. *]);
                         last;
                     }
