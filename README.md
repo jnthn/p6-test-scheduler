@@ -1,6 +1,9 @@
 # Test::Scheduler
 
 An implementation of the Perl 6 `Scheduler` role that uses virtualized time.
+This allows for testing of code depending on constructs like `Promise.in(...)`
+and `Supply.interval(...)` more quickly and reliably than would be possible if
+real time were used.
 
 ## Synopsis
 
