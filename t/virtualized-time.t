@@ -52,8 +52,10 @@ use Test::Scheduler;
     throws-like { $*SCHEDULER.advance-by(-1) }, X::Test::Scheduler::BackInTime;
 
     my $p4 = Promise.in(0);
+    is $p4.status, Planned, 'Promise in 0 seconds is not scheduled immediately';
+    $*SCHEDULER.advance();
     await $p4;
-    ok $p4, 'Promise in 0 seconds is scheduled immediately; no need to advance';
+    ok $p4, 'Promise in 0 seconds is run when advance() is called';
 }
 
 {
@@ -76,10 +78,12 @@ use Test::Scheduler;
 
     my $p3 = Promise.new;
     $*SCHEDULER.cue: { $p3.keep(22) }, :at($sim-time + 40);
+    $*SCHEDULER.advance;
     is await($p3), 22, 'Promise at current virtual time scheduled immediately';
 
     my $p4 = Promise.new;
     $*SCHEDULER.cue: { $p4.keep(69) }, :at($sim-time + 35);
+    $*SCHEDULER.advance;
     is await($p4), 69, 'Promise at earlier virtual time scheduled immediately';
 }
 
@@ -100,6 +104,7 @@ use Test::Scheduler;
     my $c = Channel.new;
     my $*SCHEDULER = Test::Scheduler.new;
     $*SCHEDULER.cue: { $c.send('x') }, :times(4);
+    $*SCHEDULER.advance;
     my @a = $c.receive xx 4;
     is @a, ['x', 'x', 'x', 'x'], ':times used without :in schedules right away';
 }
@@ -151,20 +156,23 @@ use Test::Scheduler;
 
     my $p3 = Promise.new;
     $*SCHEDULER.cue: { $p3.keep(22) }, :at($sim-time + 40);
+    $*SCHEDULER.advance;
     is await($p3), 22,
-        'Promise at current virtual time scheduled immediately having used advance-to';
+        'Promise at current virtual time scheduled immediately on next advance after advance-to';
 
     my $p4 = Promise.new;
     $*SCHEDULER.cue: { $p4.keep(69) }, :at($sim-time + 35);
+    $*SCHEDULER.advance;
     is await($p4), 69,
-        'Promise at earlier virtual time scheduled immediately having used advance-to';
+        'Promise at earlier virtual time scheduled immediately on next advance having used advance-to';
 }
 
 {
     my $*SCHEDULER = Test::Scheduler.new;
     my $s = Supply.interval(10);
     my $c = Channel.new;
-    $s.tap: { $c.send($_) }
+    $s.tap: { say "in tap callback"; $c.send($_) }
+    $*SCHEDULER.advance;
     is $c.receive, 0, 'Supply.interval zero value scheduled right away';
 
     my $real-start = now;
@@ -195,6 +203,7 @@ use Test::Scheduler;
     my $*SCHEDULER = Test::Scheduler.new;
     my $c = Channel.new;
     my $canc = $*SCHEDULER.cue: { state $i = 0; $c.send($i++) }, :every(10);
+    $*SCHEDULER.advance;
     is $c.receive, 0, ':every zero value scheduled right away';
     nok $c.poll, 'No more values available before advancing scheduler';
 
@@ -218,6 +227,7 @@ use Test::Scheduler;
     my $canc = $*SCHEDULER.cue: { state $i = 0; $c.send($i++) },
         :every(10),
         :stop({ $stop });
+    $*SCHEDULER.advance;
     is $c.receive, 0, ':every + :stop zero value scheduled right away';
     nok $c.poll, 'No more values available before advancing scheduler';
 
@@ -238,6 +248,7 @@ use Test::Scheduler;
     my $*SCHEDULER = Test::Scheduler.new;
     my $c = Channel.new;
     $*SCHEDULER.cue: { state $i = 0; $c.send($i++) }, :every(10), :times(3);
+    $*SCHEDULER.advance;
     is $c.receive, 0, ':every + :times(3) zero value scheduled right away';
     nok $c.poll, 'No more values available before advancing scheduler';
 

@@ -1,3 +1,5 @@
+use v6.d.PREVIEW;
+
 my $original-scheduler = INIT $*SCHEDULER;
 
 class X::Test::Scheduler::BackInTime is Exception {
@@ -65,7 +67,6 @@ class Test::Scheduler does Scheduler {
                         cancellation => $cancellation
                     );
                 }
-                self!run-due($!virtual-time);
                 return $cancellation;
             }
             # no stopper
@@ -77,7 +78,7 @@ class Test::Scheduler does Scheduler {
                             ?? -> {
                                 my $*SCHEDULER = self;
                                 code();
-                                CATCH { default { catch($_) } } 
+                                CATCH { default { catch($_) } }
                             }
                             !! -> {
                                 my $*SCHEDULER = self;
@@ -88,7 +89,6 @@ class Test::Scheduler does Scheduler {
                         cancellation => $cancellation
                     );
                 }
-                self!run-due($!virtual-time);
                 return $cancellation;
             }
         }
@@ -112,33 +112,54 @@ class Test::Scheduler does Scheduler {
                     @!future.push: FutureEvent.new(:&schedulee, :$virtual-time, :$cancellation);
                 }
             }
-            self!run-due($!virtual-time);
             return $cancellation;
         }
 
-        # just cue the code
         else {
             with @*TEST-SCHEDULER-NESTED -> @nested {
-                my $p = Promise.new;
+                # Already running code under the test scheduler. Delegate to
+                # the wrapped scheduler.
+                my $p = Promise.new(scheduler => $!wrapped-scheduler);
                 $!lock.protect: { @nested.push($p) };
-                $!wrapped-scheduler.cue(
-                    {
-                        my $*SCHEDULER = self;
-                        code();
-                        LEAVE $p.keep(True);
-                    },
-                    :&catch);
+                $!wrapped-scheduler.cue: &catch
+                    ?? (
+                        {
+                            my $*SCHEDULER = self;
+                            code();
+                            CATCH { default { catch($_) } } 
+                            LEAVE $p.keep(True);
+                       })
+                   !! (
+                        {
+                            my $*SCHEDULER = self;
+                            code();
+                            LEAVE $p.keep(True);
+                       });
             }
             else {
-                $!wrapped-scheduler.cue(
-                    {
-                        my $*SCHEDULER = self;
-                        code()
-                    },
-                    :&catch);
+                # Schedule the code at the current virtual time
+                my &schedulee = &catch
+                    ?? (
+                        {
+                            my $*SCHEDULER = self;
+                            code();
+                            CATCH { default { catch($_) } }
+                        })
+                    !! (
+                        {
+                            my $*SCHEDULER = self;
+                            code()
+                        });
+                $!lock.protect: {
+                    @!future.push: FutureEvent.new(:&schedulee, :$!virtual-time);
+                }
             }
             return Nil;
         }
+    }
+
+    method advance(--> Nil) {
+        self!run-due();
     }
 
     method advance-by($seconds --> Nil) {
@@ -167,22 +188,29 @@ class Test::Scheduler does Scheduler {
             }
 
             my @sorted = @now.sort(*.virtual-time);
+            my @working;
             for @sorted.kv -> $i, $_ {
                 next if .cancellation.?cancelled;
+
+                if $!virtual-time != .virtual-time {
+                    await @working;
+                    @working = ();
+                    if $!lock.protect: { so @!future } {
+                        @future.append(@sorted[$i .. *]);
+                        last;
+                    }
+                }
                 $!virtual-time = .virtual-time;
+
                 given .schedulee -> &to-run {
-                    my $done = Promise.new;
+                    my $done = Promise.new(scheduler => $!wrapped-scheduler);
                     $!wrapped-scheduler.cue({
                         my @*TEST-SCHEDULER-NESTED = ();
                         to-run();
-                        await Promise.allof(@*TEST-SCHEDULER-NESTED);
+                        await @*TEST-SCHEDULER-NESTED;
                         LEAVE $done.keep(True);
                     });
-                    await $done;
-                    if $!lock.protect: { so @!future } {
-                        @future.append(@sorted[$i + 1 .. *]);
-                        last;
-                    }
+                    push @working, $done;
                 }
                 if .reschedule-after {
                     my $next-time = .virtual-time + .reschedule-after;
@@ -195,7 +223,7 @@ class Test::Scheduler does Scheduler {
                     }
                 }
             }
-
+            await @working;
             $!lock.protect: { @!future.append(@future) }
         }
     }
